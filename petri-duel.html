@@ -97,6 +97,7 @@
   const cv = $('c'), ctx = cv.getContext('2d');
   const TAU = Math.PI * 2, R = 300;
   const SPEED = 160, STEP = 1 / 120, COVER = 0.4, CD = 0.3, GUARD = 30, HALF = 2.5;
+  const HAND_LEN = R * 0.55, HAND_SPEED = 1.15;   // short red hand, spins against the main beams
 
   // ---------- Seeded chaos: every session rolls a new duel ----------
   const mulberry = a => () => {
@@ -118,7 +119,7 @@
   let rand, seed, C, cells = [], parts = [], pending = [], tally = [0, 0], counts = [0, 0];
   let W, H, dpr, scale, cx, cy;
   let t = 0, theta = 0, state = 'play', bt = 0, shake = 0, flash = 0, shock = 0, shockHue = null;
-  let dirSign = 1, spdBoost = 1, surge = 0, evtTimer = 10;
+  let dirSign = 1, spdBoost = 1, surge = 0, evtTimer = 10, hand = 0;
 
   function roll(s) {
     seed = s; rand = mulberry(s);
@@ -231,6 +232,7 @@
   const sfxSplit = team => { if (ok('split', 0.035)) { const f = midi(degreeNote(team)); tone(f, f * 1.7, 0.16, 0.2, 'triangle'); } };
   const sfxFight = () => { if (ok('fight', 0.05)) { noise('bandpass', 2200, 400, 0.12, 0.5, 2); tone(240, 60, 0.14, 0.35); } };
   const sfxAlpha = () => { if (ok('alpha', 0.2)) { tone(midi(79), midi(79), 0.5, 0.14, 'sine'); tone(midi(86), midi(86), 0.6, 0.12, 'sine', 0.08); } };
+  const sfxZap = () => { if (ok('zap', 0.04)) { noise('highpass', 5000, 900, 0.1, 0.4); tone(700, 140, 0.12, 0.25, 'sawtooth'); } };
   const sfxEvent = () => { if (ok('evt', 0.3)) noise('bandpass', 300, 5000, 0.7, 0.35, 0.8); };
   const sfxBoom = () => {
     if (!ok('boom', 0.5)) return;
@@ -328,6 +330,20 @@
     }
   }
 
+  // Red hand: anything it touches shatters for good (no replication). Fresh/immune cells are spared.
+  function handKill() {
+    const c = Math.cos(hand), s = Math.sin(hand), px = -s, py = c;
+    let hit = false;
+    for (let i = cells.length - 1; i >= 0; i--) {
+      const b = cells[i]; if (b.imm > 0) continue;
+      const along = b.x * c + b.y * s, perp = b.x * px + b.y * py;
+      if (along > GUARD && along < HAND_LEN + b.rad && Math.abs(perp) < b.rad + HALF + 0.5) {
+        shatter(b, 9); cells[i] = cells[cells.length - 1]; cells.pop(); hit = true;
+      }
+    }
+    if (hit) sfxZap();
+  }
+
   function randomEvent() {
     const ev = ['Surge', 'Reverse', 'Quake', 'Mutiny', 'Plague'][(Math.random() * 5) | 0];
     showEvt(ev); sfxEvent();
@@ -389,11 +405,12 @@
           if (vn > 0) { c.vx -= 2 * vn * nx; c.vy -= 2 * vn * ny; }
         }
       }
-      collide(); beams();
+      hand -= C.omega * dirSign * HAND_SPEED * dt;
+      collide(); beams(); handKill();
       if (pending.length) { for (const p of pending) cells.push(p); pending = []; }
       checkEnd();
     } else {
-      bt += dt; theta += C.omega * dirSign * dt;
+      bt += dt; theta += C.omega * dirSign * dt; hand -= C.omega * dirSign * HAND_SPEED * dt;
       const drag = Math.max(0, 1 - 1.3 * dt);
       for (const c of cells) { c.x += c.vx * dt; c.y += c.vy * dt; c.vx *= drag; c.vy *= drag; }
       shock = Math.min(1, bt / 0.9);
@@ -423,6 +440,17 @@
       ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, 0, 7, 0, TAU); ctx.fill();   // emitter
       ctx.restore();
     }
+    // red hand
+    ctx.save(); ctx.rotate(hand);
+    for (let i = 1; i <= 12; i++) {
+      ctx.save(); ctx.rotate(i * 0.03 * dirSign);        // afterglow trails behind its (counter) motion
+      ctx.globalAlpha = 0.11 * (1 - i / 13); ctx.strokeStyle = '#ff2d2d'; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.moveTo(GUARD, 0); ctx.lineTo(HAND_LEN, 0); ctx.stroke(); ctx.restore();
+    }
+    ctx.globalAlpha = 1; ctx.strokeStyle = '#ff3b3b'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(GUARD, 0); ctx.lineTo(HAND_LEN, 0); ctx.stroke();
+    ctx.fillStyle = '#ff3b3b'; ctx.beginPath(); ctx.arc(HAND_LEN, 0, 3.2, 0, TAU); ctx.fill();
+    ctx.restore();
   }
 
   function drawTeam(team, fade) {
