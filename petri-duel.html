@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Petri Duel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{--a:#4cf;--b:#f4c}
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;color:#fff;
+    font-family:'Plus Jakarta Sans',system-ui,-apple-system,sans-serif;
+    -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+  #hud{position:fixed;left:0;right:0;top:max(14px,env(safe-area-inset-top));text-align:center;pointer-events:none;line-height:1}
+  #nums{display:flex;justify-content:center;align-items:baseline;gap:14px}
+  #nums b{font-weight:800;font-size:38px;letter-spacing:-.02em;font-variant-numeric:tabular-nums;min-width:2ch}
+  #nums span{font-weight:500;font-size:12px;letter-spacing:.14em;text-transform:uppercase;opacity:.35}
+  #nA{color:var(--a);text-align:right}#nB{color:var(--b);text-align:left}
+  #bar{display:flex;width:170px;height:4px;margin:9px auto 0;border-radius:2px;overflow:hidden;background:rgba(255,255,255,.08)}
+  #bar i{display:block;height:100%;transition:width .25s}
+  #barA{background:var(--a)}#barB{background:var(--b)}
+  #tally{margin-top:9px;font-weight:700;font-size:12px;letter-spacing:.1em;opacity:.55}
+  #evt{margin-top:7px;height:14px;font-weight:700;font-size:11px;letter-spacing:.22em;text-transform:uppercase;opacity:0;transition:opacity .3s}
+  #info{position:fixed;left:0;right:0;bottom:max(16px,env(safe-area-inset-bottom));text-align:center;pointer-events:none;line-height:1.7}
+  #cfg{font-weight:700;font-size:13px;opacity:.7}
+  #sub{font-weight:500;font-size:11px;letter-spacing:.14em;text-transform:uppercase;opacity:.38;transition:opacity .4s}
+
+  #gear{position:fixed;right:max(14px,env(safe-area-inset-right));top:max(14px,env(safe-area-inset-top));
+    width:40px;height:40px;display:grid;place-items:center;border:0;border-radius:12px;
+    background:rgba(255,255,255,.08);color:#fff;cursor:pointer;padding:0;z-index:5}
+  #gear:hover{background:rgba(255,255,255,.14)}
+  #gear svg{width:20px;height:20px}
+  #panel{position:fixed;right:max(14px,env(safe-area-inset-right));top:calc(max(14px,env(safe-area-inset-top)) + 50px);
+    width:248px;padding:16px;border-radius:16px;background:rgba(22,22,22,.94);backdrop-filter:blur(10px);z-index:5;
+    font-size:13px;box-shadow:0 12px 40px rgba(0,0,0,.6)}
+  #panel[hidden]{display:none}
+  #panel .row{margin-bottom:16px}
+  #panel .row:last-child{margin-bottom:0}
+  #panel .lab{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;font-weight:700}
+  #panel .lab b{font-weight:500;opacity:.55;font-variant-numeric:tabular-nums}
+  #panel input[type=range]{width:100%;margin:0;accent-color:#fff}
+  .seg{display:flex;gap:4px;padding:3px;border-radius:10px;background:rgba(255,255,255,.07)}
+  .seg button{flex:1;border:0;border-radius:8px;padding:7px 4px;background:transparent;color:rgba(255,255,255,.6);
+    font:inherit;font-weight:700;font-size:12px;cursor:pointer}
+  .seg button.on{background:#fff;color:#000}
+  .btn{width:100%;border:0;border-radius:10px;padding:10px;background:rgba(255,255,255,.1);color:#fff;
+    font:inherit;font-weight:700;font-size:13px;cursor:pointer}
+  .btn:hover{background:rgba(255,255,255,.17)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud">
+  <div id="nums"><b id="nA">1</b><span>vs</span><b id="nB">1</b></div>
+  <div id="bar"><i id="barA" style="width:50%"></i><i id="barB" style="width:50%"></i></div>
+  <div id="tally"><span id="tA">0</span> &ndash; <span id="tB">0</span></div>
+  <div id="evt"></div>
+</div>
+
+<div id="info">
+  <div id="cfg"></div>
+  <div id="sub">Tap anywhere to enable sound</div>
+</div>
+
+<button id="gear" aria-label="Settings">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+    <path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>
+  </svg>
+</button>
+
+<div id="panel" hidden>
+  <div class="row">
+    <div class="lab"><span>Cell size</span><b id="vSize">9</b></div>
+    <input id="size" type="range" min="5" max="16" step="1" value="9">
+  </div>
+  <div class="row">
+    <div class="lab"><span>Split count</span><b id="vSplit">2</b></div>
+    <input id="split" type="range" min="2" max="6" step="1" value="2">
+  </div>
+  <div class="row">
+    <div class="lab"><span>Sound</span></div>
+    <div class="seg" id="segSound">
+      <button data-sound="on" class="on">On</button>
+      <button data-sound="off">Off</button>
+    </div>
+  </div>
+  <div class="row"><button class="btn" id="chaos">New chaos</button></div>
+  <div class="row"><button class="btn" id="restart">Restart round</button></div>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const cv = $('c'), ctx = cv.getContext('2d');
+  const TAU = Math.PI * 2, R = 300;
+  const SPEED = 160, STEP = 1 / 120, COVER = 0.4, CD = 0.3, GUARD = 30, HALF = 2.5;
+
+  // ---------- Seeded chaos: every session rolls a new duel ----------
+  const mulberry = a => () => {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+  const SCALES = {
+    'Pentatonic': [0, 2, 4, 7, 9], 'Minor pentatonic': [0, 3, 5, 7, 10], 'Hirajoshi': [0, 2, 3, 7, 8],
+    'Dorian': [0, 2, 3, 5, 7, 9, 10], 'Lydian': [0, 2, 4, 6, 7, 9, 11]
+  };
+  const HUES = [[15, 'Red'], [45, 'Orange'], [70, 'Yellow'], [110, 'Lime'], [150, 'Green'], [180, 'Teal'],
+                [200, 'Cyan'], [240, 'Blue'], [275, 'Violet'], [320, 'Magenta'], [345, 'Pink'], [360, 'Red']];
+  const hueName = h => HUES.find(x => h < x[0])[1];
+  const col = (t, l = 62) => `hsl(${C.hue[t]},90%,${l}%)`;
+
+  let r = 9, SPLIT = 2, FULL = 0;
+  let rand, seed, C, cells = [], parts = [], pending = [], tally = [0, 0], counts = [0, 0];
+  let W, H, dpr, scale, cx, cy;
+  let t = 0, theta = 0, state = 'play', bt = 0, shake = 0, flash = 0, shock = 0, shockHue = null;
+  let dirSign = 1, spdBoost = 1, surge = 0, evtTimer = 10;
+
+  function roll(s) {
+    seed = s; rand = mulberry(s);
+    const rr = (a, b) => a + rand() * (b - a), pick = a => a[(rand() * a.length) | 0];
+    const hA = rr(0, 360), sc = pick(Object.keys(SCALES));
+    C = {
+      hue: [hA, (hA + rr(110, 250)) % 360],
+      bias: rr(0.38, 0.62),                 // chance that team A wins a fight
+      beams: 1 + ((rand() * 3) | 0), omega: rr(1.6, 3.0),
+      mut: rr(0.02, 0.07),                  // chance a newborn mutates into a giant alpha
+      feed: rr(0.2, 0.5),                   // chance the winner of a fight replicates
+      scaleName: sc, scale: SCALES[sc], root: (rand() * 12) | 0
+    };
+    dirSign = rand() < 0.5 ? 1 : -1;
+    document.documentElement.style.setProperty('--a', col(0));
+    document.documentElement.style.setProperty('--b', col(1));
+    tally = [0, 0];
+    $('cfg').textContent =
+      `${hueName(C.hue[0])} ${Math.round(C.bias * 100)}/${100 - Math.round(C.bias * 100)} ${hueName(C.hue[1])} · ${C.beams} beam${C.beams > 1 ? 's' : ''} · #${seed.toString(36).toUpperCase()}`;
+    try { history.replaceState(null, '', '#' + seed.toString(36)); } catch (e) {}
+    configure(); newRound();
+  }
+  const newSeed = () => (Math.random() * 1e9) | 0;
+
+  // ---------- Grid ----------
+  let CELL, GN, head, next;
+  function configure() {
+    FULL = Math.floor(COVER * (R / r) ** 2);
+    CELL = r * 1.8 * 2; GN = Math.ceil((R * 2) / CELL) + 2;
+    head = new Int32Array(GN * GN); next = new Int32Array(FULL * 2 + 64);
+    $('size').value = r; $('vSize').textContent = r;
+  }
+
+  const mk = (x, y, a, team, imm = 0) => ({
+    x, y, vx: Math.cos(a) * SPEED, vy: Math.sin(a) * SPEED, t: team, rad: r, cd: 0, imm, al: 0, dead: false, pulse: 0
+  });
+
+  function newRound() {
+    cells = []; parts = []; pending = [];
+    const a = Math.random() * TAU;
+    cells.push(mk(Math.cos(a) * 150, Math.sin(a) * 150, Math.random() * TAU, 0, 3.2));
+    cells.push(mk(-Math.cos(a) * 150, -Math.sin(a) * 150, Math.random() * TAU, 1, 3.2));
+    state = 'play'; bt = 0; surge = 0; spdBoost = 1; evtTimer = 8 + Math.random() * 5;
+    hudUpdate(true);
+  }
+
+  function resize() {
+    W = innerWidth; H = innerHeight; dpr = Math.min(devicePixelRatio || 1, 2);
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    const top = 116, bot = 58, avail = H - top - bot;
+    scale = Math.min(W * 0.96, avail * 0.97) / (2 * R + 10);
+    cx = W / 2; cy = top + avail / 2;
+  }
+
+  // ---------- HUD ----------
+  let shownA = -1, shownB = -1, evtT = 0;
+  function hudUpdate(force) {
+    if (force || counts[0] !== shownA || counts[1] !== shownB) {
+      shownA = counts[0]; shownB = counts[1];
+      const tot = Math.max(1, shownA + shownB);
+      $('nA').textContent = shownA; $('nB').textContent = shownB;
+      $('barA').style.width = (shownA / tot * 100) + '%'; $('barB').style.width = (shownB / tot * 100) + '%';
+    }
+    $('tA').textContent = tally[0]; $('tB').textContent = tally[1];
+  }
+  function showEvt(text, dur = 1.6) { $('evt').textContent = text; $('evt').style.opacity = 0.75; evtT = dur; }
+
+  // ---------- Sound (synthesized) ----------
+  let ac = null, master, noiseBuf, soundOn = true;
+  const lastAt = {};
+  function hintUpdate() { $('sub').style.opacity = (soundOn && !(ac && ac.state === 'running')) ? '0.38' : '0'; }
+  function unlock() {
+    if (!ac) {
+      const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+      ac = new AC();
+      const comp = ac.createDynamicsCompressor(); comp.connect(ac.destination);
+      master = ac.createGain(); master.gain.value = 0.5; master.connect(comp);
+      noiseBuf = ac.createBuffer(1, ac.sampleRate * 1.4, ac.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      ac.onstatechange = hintUpdate;
+    }
+    if (ac.state !== 'running') ac.resume();
+    hintUpdate();
+  }
+  const ok = (key, gap) => {
+    if (!ac || !soundOn || ac.state !== 'running') return false;
+    const n = ac.currentTime; if (n - (lastAt[key] || 0) < gap) return false;
+    lastAt[key] = n; return true;
+  };
+  function tone(f0, f1, dur, vol, type = 'sine', delay = 0) {
+    const n = ac.currentTime + delay, o = ac.createOscillator(), g = ac.createGain();
+    o.type = type; o.frequency.setValueAtTime(f0, n); o.frequency.exponentialRampToValueAtTime(f1, n + dur);
+    g.gain.setValueAtTime(0.0001, n); g.gain.linearRampToValueAtTime(vol, n + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, n + dur);
+    o.connect(g); g.connect(master); o.start(n); o.stop(n + dur + 0.02);
+  }
+  function noise(type, f0, f1, dur, vol, q = 1) {
+    const n = ac.currentTime, s = ac.createBufferSource(), fl = ac.createBiquadFilter(), g = ac.createGain();
+    s.buffer = noiseBuf; fl.type = type; fl.Q.value = q;
+    fl.frequency.setValueAtTime(f0, n); fl.frequency.exponentialRampToValueAtTime(f1, n + dur);
+    g.gain.setValueAtTime(vol, n); g.gain.exponentialRampToValueAtTime(0.001, n + dur);
+    s.connect(fl); fl.connect(g); g.connect(master); s.start(n, Math.random() * 0.8); s.stop(n + dur + 0.02);
+  }
+  const midi = m => 440 * Math.pow(2, (m - 69) / 12);
+  function degreeNote(team) {
+    const L = C.scale.length, deg = (Math.random() * L * 2) | 0;
+    return (team ? 67 : 55) + C.root + C.scale[deg % L] + 12 * Math.floor(deg / L);
+  }
+  const sfxSplit = team => { if (ok('split', 0.035)) { const f = midi(degreeNote(team)); tone(f, f * 1.7, 0.16, 0.2, 'triangle'); } };
+  const sfxFight = () => { if (ok('fight', 0.05)) { noise('bandpass', 2200, 400, 0.12, 0.5, 2); tone(240, 60, 0.14, 0.35); } };
+  const sfxAlpha = () => { if (ok('alpha', 0.2)) { tone(midi(79), midi(79), 0.5, 0.14, 'sine'); tone(midi(86), midi(86), 0.6, 0.12, 'sine', 0.08); } };
+  const sfxEvent = () => { if (ok('evt', 0.3)) noise('bandpass', 300, 5000, 0.7, 0.35, 0.8); };
+  const sfxBoom = () => {
+    if (!ok('boom', 0.5)) return;
+    noise('lowpass', 3200, 90, 1.1, 0.9); tone(150, 34, 0.6, 0.9);
+  };
+  const sfxWin = team => {
+    if (!ok('win', 0.5)) return;
+    const base = (team ? 67 : 55) + C.root;
+    [0, 4, 7, 12].forEach((s, i) => tone(midi(base + s), midi(base + s), 0.8, 0.16, 'triangle', i * 0.09));
+    noise('lowpass', 2500, 120, 0.9, 0.6);
+  };
+
+  // ---------- Particles ----------
+  function shatter(c, n = 8) {
+    const colr = col(c.t, 68);
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * TAU, sp = 60 + Math.random() * 260;
+      parts.push({ x: c.x, y: c.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 0,
+                   max: 0.3 + Math.random() * 0.5, size: 1.2 + Math.random() * 2.4, c: colr });
+    }
+  }
+
+  // ---------- Simulation ----------
+  const pushPending = (c) => { if (cells.length + pending.length < FULL + 8) pending.push(c); };
+
+  function fight(a, b) {
+    let w;
+    if (a.al > 0 && b.al <= 0) w = a;
+    else if (b.al > 0 && a.al <= 0) w = b;
+    else { const team0 = Math.random() < C.bias; w = ((a.t === 0) === team0) ? a : b; }
+    const l = w === a ? b : a;
+    l.dead = true; shatter(l); w.pulse = 1; sfxFight();
+    if (w.al > 0 || Math.random() < C.feed) {       // the winner feeds and replicates
+      const ang = Math.random() * TAU, c = mk(w.x + Math.cos(ang) * r, w.y + Math.sin(ang) * r, ang, w.t, 0.35);
+      c.cd = t + CD; pushPending(c); sfxSplit(w.t);
+    }
+  }
+
+  function collide() {
+    const n = cells.length;
+    if (next.length < n) next = new Int32Array(n * 2);
+    head.fill(-1);
+    const gi = (v) => { const g = Math.floor((v + R) / CELL) + 1; return g < 0 ? 0 : g >= GN ? GN - 1 : g; };
+    for (let i = 0; i < n; i++) { const c = gi(cells[i].y) * GN + gi(cells[i].x); next[i] = head[c]; head[c] = i; }
+    for (let i = 0; i < n; i++) {
+      const a = cells[i]; if (a.dead) continue;
+      const gx = gi(a.x), gy = gi(a.y);
+      for (let oy = -1; oy <= 1; oy++) {
+        const yy = gy + oy; if (yy < 0 || yy >= GN) continue;
+        for (let ox = -1; ox <= 1; ox++) {
+          const xx = gx + ox; if (xx < 0 || xx >= GN) continue;
+          for (let j = head[yy * GN + xx]; j !== -1; j = next[j]) {
+            if (j <= i) continue;
+            const b = cells[j]; if (b.dead || a.dead) continue;
+            let dx = a.x - b.x, dy = a.y - b.y;
+            const rs = a.rad + b.rad, d2 = dx * dx + dy * dy;
+            if (d2 >= rs * rs) continue;
+            if (a.t !== b.t && a.imm <= 0 && b.imm <= 0) { fight(a, b); continue; }
+            let d = Math.sqrt(d2);
+            if (d < 0.0001) { dx = 1; dy = 0; d = 1; }
+            const nx = dx / d, ny = dy / d, ov = (rs - d) * 0.5;
+            a.x += nx * ov; a.y += ny * ov; b.x -= nx * ov; b.y -= ny * ov;
+            const vn = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+            if (vn < 0) { a.vx -= vn * nx; a.vy -= vn * ny; b.vx += vn * nx; b.vy += vn * ny; }
+          }
+        }
+      }
+    }
+    if (cells.some(c => c.dead)) cells = cells.filter(c => !c.dead);
+  }
+
+  function beams() {
+    const nb = C.beams + (surge > 0 ? 1 : 0);
+    for (let k = 0; k < nb; k++) {
+      const ang = theta + k * TAU / nb, c = Math.cos(ang), s = Math.sin(ang), px = -s, py = c;
+      for (let i = cells.length - 1; i >= 0; i--) {
+        const b = cells[i]; if (b.cd > t) continue;
+        const along = b.x * c + b.y * s, perp = b.x * px + b.y * py;
+        if (along > GUARD && along < R + b.rad && Math.abs(perp) < b.rad + HALF) {
+          const base = Math.atan2(b.vy, b.vx), wasAlpha = b.al > 0;
+          let mutated = wasAlpha;                                    // alphas never pass the trait on
+          for (let q = 0; q < SPLIT; q++) {
+            const ang2 = SPLIT === 2
+              ? Math.atan2(Math.sin(base) * 0.5 + py * (q ? -1 : 1) * 0.9, Math.cos(base) * 0.5 + px * (q ? -1 : 1) * 0.9)
+              : base + (q / SPLIT) * TAU + Math.random() * 0.6 - 0.3;
+            const nc = mk(b.x + Math.cos(ang2) * r * 0.6, b.y + Math.sin(ang2) * r * 0.6, ang2, b.t, 0.35);
+            nc.cd = t + CD;
+            if (!mutated && Math.random() < C.mut) { nc.rad = r * 1.7; nc.al = 10; nc.imm = 0.6; mutated = true; sfxAlpha(); }
+            pending.push(nc);
+          }
+          sfxSplit(b.t);
+          cells[i] = cells[cells.length - 1]; cells.pop();
+        }
+      }
+    }
+  }
+
+  function randomEvent() {
+    const ev = ['Surge', 'Reverse', 'Quake', 'Mutiny', 'Plague'][(Math.random() * 5) | 0];
+    showEvt(ev); sfxEvent();
+    if (ev === 'Surge') surge = 4;
+    else if (ev === 'Reverse') { dirSign *= -1; spdBoost = 2.4; }
+    else if (ev === 'Quake') {
+      shake = 8;
+      for (const c of cells) { const a = Math.random() * TAU; c.vx += Math.cos(a) * 220; c.vy += Math.sin(a) * 220; }
+    } else if (ev === 'Mutiny') {
+      for (const c of cells) if (Math.random() < 0.12) { c.t ^= 1; c.pulse = 1; }
+    } else if (ev === 'Plague') {
+      for (const c of cells) if (Math.random() < 0.12) { c.dead = true; shatter(c, 5); }
+      cells = cells.filter(c => !c.dead);
+    }
+  }
+
+  function endRound(kind, winner) {
+    state = 'boom'; bt = 0; shake = 16; flash = 0.4; shock = 0;
+    shockHue = kind === 'win' ? C.hue[winner] : null;
+    if (kind === 'win') { tally[winner]++; showEvt(hueName(C.hue[winner]) + ' wins', 2.2); sfxWin(winner); }
+    else { showEvt(kind === 'full' ? 'Overflow' : 'Extinction', 2.2); sfxBoom(); }
+    for (const c of cells) {
+      const a = Math.atan2(c.y, c.x) + (Math.random() - 0.5), sp = 260 + Math.random() * 720;
+      c.vx = Math.cos(a) * sp + c.vx * 0.3; c.vy = Math.sin(a) * sp + c.vy * 0.3;
+    }
+    if (cells.length) for (let i = 0; i < 150; i++) {
+      const c = cells[(Math.random() * cells.length) | 0], a = Math.random() * TAU, sp = 200 + Math.random() * 900;
+      parts.push({ x: c.x, y: c.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 0,
+                   max: 0.5 + Math.random() * 0.9, size: 1.2 + Math.random() * 3, c: col(c.t, 68) });
+    }
+  }
+
+  function checkEnd() {
+    let a = 0, b = 0;
+    for (const c of cells) c.t ? b++ : a++;
+    counts = [a, b];
+    if (a + b === 0) endRound('extinct');
+    else if (a === 0 || b === 0) endRound('win', a ? 0 : 1);
+    else if (a + b >= FULL) endRound('full');
+  }
+
+  function step(dt) {
+    if (state === 'play') {
+      t += dt;
+      spdBoost += (1 - spdBoost) * Math.min(1, dt * 0.8);
+      theta += C.omega * dirSign * (surge > 0 ? 1.5 : 1) * spdBoost * dt;
+      if (surge > 0) surge -= dt;
+      evtTimer -= dt; if (evtTimer <= 0) { randomEvent(); evtTimer = 8 + Math.random() * 7; }
+      for (const c of cells) {
+        c.x += c.vx * dt; c.y += c.vy * dt;
+        if (c.imm > 0) c.imm -= dt;
+        if (c.pulse > 0) c.pulse -= dt * 3;
+        if (c.al > 0) { c.al -= dt; if (c.al <= 0) c.rad = r; }
+        const d2 = c.x * c.x + c.y * c.y, lim = R - c.rad;
+        if (d2 > lim * lim) {
+          const d = Math.sqrt(d2), nx = c.x / d, ny = c.y / d;
+          c.x = nx * lim; c.y = ny * lim;
+          const vn = c.vx * nx + c.vy * ny;
+          if (vn > 0) { c.vx -= 2 * vn * nx; c.vy -= 2 * vn * ny; }
+        }
+      }
+      collide(); beams();
+      if (pending.length) { for (const p of pending) cells.push(p); pending = []; }
+      checkEnd();
+    } else {
+      bt += dt; theta += C.omega * dirSign * dt;
+      const drag = Math.max(0, 1 - 1.3 * dt);
+      for (const c of cells) { c.x += c.vx * dt; c.y += c.vy * dt; c.vx *= drag; c.vy *= drag; }
+      shock = Math.min(1, bt / 0.9);
+      if (bt > 2.3) newRound();
+    }
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i];
+      p.life += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.97; p.vy *= 0.97;
+      if (p.life >= p.max) { parts[i] = parts[parts.length - 1]; parts.pop(); }
+    }
+    shake *= Math.pow(0.001, dt); flash = Math.max(0, flash - dt * 1.4);
+  }
+
+  // ---------- Draw ----------
+  function drawBeams() {
+    const nb = C.beams + (surge > 0 ? 1 : 0);
+    ctx.lineCap = 'round';
+    for (let k = 0; k < nb; k++) {
+      ctx.save(); ctx.rotate(theta + k * TAU / nb);
+      for (let i = 1; i <= 16; i++) {                      // scanner afterglow
+        ctx.save(); ctx.rotate(-i * 0.026 * dirSign);
+        ctx.globalAlpha = 0.07 * (1 - i / 17); ctx.strokeStyle = '#fff'; ctx.lineWidth = 6;
+        ctx.beginPath(); ctx.moveTo(GUARD, 0); ctx.lineTo(R - 4, 0); ctx.stroke(); ctx.restore();
+      }
+      ctx.globalAlpha = 1; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.2;
+      ctx.beginPath(); ctx.moveTo(GUARD, 0); ctx.lineTo(R - 4, 0); ctx.stroke();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, 0, 7, 0, TAU); ctx.fill();   // emitter
+      ctx.restore();
+    }
+  }
+
+  function drawTeam(team, fade) {
+    const hue = C.hue[team];
+    // soft halo pass, then body, then nucleus
+    ctx.fillStyle = `hsla(${hue},95%,60%,${0.16 * fade})`; ctx.beginPath();
+    for (const c of cells) if (c.t === team) { ctx.moveTo(c.x + c.rad * 1.7, c.y); ctx.arc(c.x, c.y, c.rad * 1.7, 0, TAU); }
+    ctx.fill();
+    for (const c of cells) {
+      if (c.t !== team) continue;
+      ctx.globalAlpha = (c.imm > 0 ? 0.55 : 1) * fade;
+      ctx.fillStyle = `hsl(${hue},90%,${62 + Math.max(0, c.pulse) * 25}%)`;
+      ctx.beginPath(); ctx.arc(c.x, c.y, c.rad - 0.6, 0, TAU); ctx.fill();
+      ctx.fillStyle = `hsl(${hue},95%,84%)`;
+      ctx.beginPath(); ctx.arc(c.x, c.y, c.rad * 0.34, 0, TAU); ctx.fill();
+      if (c.al > 0) {                                      // alpha aura
+        ctx.strokeStyle = `hsl(${hue},95%,80%)`; ctx.lineWidth = 1.6; ctx.globalAlpha = (0.5 + 0.5 * Math.sin(t * 9)) * fade;
+        ctx.beginPath(); ctx.arc(c.x, c.y, c.rad + 4, 0, TAU); ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function draw() {
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
+    const sx = (Math.random() - 0.5) * 2 * shake, sy = (Math.random() - 0.5) * 2 * shake;
+    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * (cx + sx), dpr * (cy + sy));
+
+    if (state === 'boom') {                                // shockwave
+      ctx.globalAlpha = (1 - shock) * 0.7;
+      ctx.strokeStyle = shockHue === null ? '#fff' : `hsl(${shockHue},90%,65%)`;
+      ctx.lineWidth = 2 + (1 - shock) * 6;
+      ctx.beginPath(); ctx.arc(0, 0, R + shock * R * 1.1, 0, TAU); ctx.stroke(); ctx.globalAlpha = 1;
+    }
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5;
+    ctx.globalAlpha = state === 'boom' ? Math.max(0.25, 1 - bt * 0.8) : 1;
+    ctx.beginPath(); ctx.arc(0, 0, R + 1.5, 0, TAU); ctx.stroke(); ctx.globalAlpha = 1;
+
+    const fade = state === 'boom' ? Math.max(0, 1 - bt / 1.9) : 1;
+    drawTeam(0, fade); drawTeam(1, fade);
+
+    for (const p of parts) {
+      ctx.globalAlpha = 1 - p.life / p.max; ctx.fillStyle = p.c;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, TAU); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    drawBeams();
+
+    if (flash > 0) {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.globalAlpha = flash; ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height); ctx.globalAlpha = 1;
+    }
+  }
+
+  // ---------- Loop ----------
+  let last = 0, acc = 0;
+  function frame(ts) {
+    if (!last) last = ts;
+    const dt = Math.min((ts - last) / 1000, 0.05); last = ts; acc += dt;
+    while (acc >= STEP) { step(STEP); acc -= STEP; }
+    if (evtT > 0) { evtT -= dt; if (evtT <= 0) $('evt').style.opacity = 0; }
+    hudUpdate(false); draw();
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- Input / settings ----------
+  const panel = $('panel'), gear = $('gear');
+  gear.addEventListener('click', () => { panel.hidden = !panel.hidden; });
+  addEventListener('pointerdown', e => {
+    unlock();
+    if (!panel.hidden && !panel.contains(e.target) && !gear.contains(e.target)) panel.hidden = true;
+  });
+  addEventListener('keydown', e => { unlock(); if (e.key === ' ') roll(newSeed()); });
+  $('size').addEventListener('input', () => { r = +$('size').value; configure(); newRound(); });
+  $('split').addEventListener('input', () => { SPLIT = +$('split').value; $('vSplit').textContent = SPLIT; newRound(); });
+  $('chaos').addEventListener('click', () => roll(newSeed()));
+  $('restart').addEventListener('click', () => newRound());
+  panel.addEventListener('click', e => {
+    const bs = e.target.closest('[data-sound]');
+    if (bs) {
+      soundOn = bs.dataset.sound === 'on';
+      for (const x of bs.parentNode.children) x.classList.toggle('on', x === bs);
+      hintUpdate();
+    }
+  });
+  addEventListener('resize', resize);
+
+  resize();
+  const fromHash = parseInt((location.hash || '').slice(1), 36);
+  roll(Number.isFinite(fromHash) && fromHash > 0 ? fromHash : newSeed());
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
