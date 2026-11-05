@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Samurai Split</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;color:#fff;
+    font-family:'Plus Jakarta Sans',system-ui,-apple-system,sans-serif;
+    -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+  #hud{position:fixed;left:0;right:0;top:max(16px,env(safe-area-inset-top));
+    text-align:center;pointer-events:none;line-height:1}
+  #count{font-weight:800;font-size:40px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  #count .of{font-weight:500;font-size:15px;opacity:.38;letter-spacing:0;margin-left:6px}
+  #hint{margin-top:8px;font-weight:500;font-size:12px;letter-spacing:.14em;text-transform:uppercase;opacity:.42;transition:opacity .4s}
+
+  #gear{position:fixed;right:max(14px,env(safe-area-inset-right));top:max(14px,env(safe-area-inset-top));
+    width:40px;height:40px;display:grid;place-items:center;border:0;border-radius:12px;
+    background:rgba(255,255,255,.08);color:#fff;cursor:pointer;padding:0;z-index:5}
+  #gear:hover{background:rgba(255,255,255,.14)}
+  #gear svg{width:20px;height:20px}
+  #panel{position:fixed;right:max(14px,env(safe-area-inset-right));top:calc(max(14px,env(safe-area-inset-top)) + 50px);
+    width:248px;padding:16px;border-radius:16px;background:rgba(22,22,22,.94);backdrop-filter:blur(10px);z-index:5;
+    font-size:13px;box-shadow:0 12px 40px rgba(0,0,0,.6)}
+  #panel[hidden]{display:none}
+  #panel .row{margin-bottom:16px}
+  #panel .row:last-child{margin-bottom:0}
+  #panel .lab{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;font-weight:700}
+  #panel .lab b{font-weight:500;opacity:.55;font-variant-numeric:tabular-nums}
+  #panel .note{margin-top:6px;font-size:11px;line-height:1.45;opacity:.42}
+  #panel input[type=range]{width:100%;margin:0;accent-color:#fff}
+  .seg{display:flex;gap:4px;padding:3px;border-radius:10px;background:rgba(255,255,255,.07)}
+  .seg button{flex:1;border:0;border-radius:8px;padding:7px 4px;background:transparent;color:rgba(255,255,255,.6);
+    font:inherit;font-weight:700;font-size:12px;cursor:pointer}
+  .seg button.on{background:#fff;color:#000}
+  #restart{width:100%;border:0;border-radius:10px;padding:10px;background:rgba(255,255,255,.1);color:#fff;
+    font:inherit;font-weight:700;font-size:13px;cursor:pointer}
+  #restart:hover{background:rgba(255,255,255,.17)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <div id="count"><span id="n">1</span><span class="of">/ <span id="full">500</span></span></div>
+  <div id="hint">Tap anywhere to enable sound</div>
+</div>
+
+<button id="gear" aria-label="Settings">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+    <path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>
+  </svg>
+</button>
+
+<div id="panel" hidden>
+  <div class="row">
+    <div class="lab"><span>Ball size</span><b id="vSize">9</b></div>
+    <input id="size" type="range" min="5" max="16" step="1" value="9">
+  </div>
+  <div class="row">
+    <div class="lab"><span>Split count</span><b id="vSplit">2</b></div>
+    <input id="split" type="range" min="2" max="8" step="1" value="2">
+  </div>
+  <div class="row">
+    <div class="lab"><span>Colors</span></div>
+    <div class="seg" id="segColor">
+      <button data-color="gen" class="on">By cuts</button>
+      <button data-color="mono">White</button>
+    </div>
+    <div class="note">Each cut shifts a ball's hue, so color shows how many times it has been sliced.</div>
+  </div>
+  <div class="row">
+    <div class="lab"><span>Sound</span></div>
+    <div class="seg" id="segSound">
+      <button data-sound="on" class="on">On</button>
+      <button data-sound="off">Off</button>
+    </div>
+  </div>
+  <div class="row"><button id="restart">Restart</button></div>
+</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  const elN = document.getElementById('n');
+  const elFull = document.getElementById('full');
+  const hint = document.getElementById('hint');
+
+  // ---------- Config ----------
+  const R = 300;            // radius lingkaran (unit logika)
+  let r = 9;                // ball radius (settings: Ball size)
+  const COVER = 0.45;       // circle counts as "full" when balls cover 45% of the area
+  let FULL = Math.floor(COVER * (R / r) ** 2);
+  let SPLIT = 2;            // balls produced per cut (settings: Split count)
+  const OMEGA = 2.4;        // kecepatan putar samurai (rad/detik), searah jarum jam
+  const SPEED = 170;        // kecepatan bola
+  const GUARD = 34;         // posisi tsuba dari pusat
+  const BLADE = R - 4;      // panjang bilah
+  const HALF = 2.2;         // setengah tebal bilah (hitbox)
+  const CUT_CD = 0.3;       // jeda bola yang baru kepotong biar nggak kepotong ulang
+  const STEP = 1 / 120;
+  const TAU = Math.PI * 2;
+
+  // ---------- State ----------
+  let W = 0, H = 0, dpr = 1, scale = 1, cx = 0, cy = 0;
+  let balls = [], parts = [];
+  let theta = -Math.PI / 2, t = 0;
+  let state = 'play', bt = 0;
+  let colorMode = 'gen';
+  const PAL = Array.from({ length: 72 }, (_, i) => `hsl(${(200 + i * 34) % 360},90%,62%)`);
+  const colorOf = g => colorMode === 'gen' ? PAL[g % 72] : '#fff';
+  let shake = 0, flash = 0, shock = 0, swordA = 1;
+  let shown = -1;
+
+  const rnd = (a, b) => a + Math.random() * (b - a);
+
+  function newBall(x, y, a, g = 0) {
+    return { x, y, vx: Math.cos(a) * SPEED, vy: Math.sin(a) * SPEED, cd: 0, g };
+  }
+
+  function reset() {
+    const a = rnd(0, TAU), d = rnd(60, 180);
+    const b = newBall(Math.cos(a) * d, Math.sin(a) * d, rnd(0, TAU));
+    b.cd = t + 0.5;
+    balls = [b];
+    parts = [];
+    state = 'play'; bt = 0;
+  }
+
+  function resize() {
+    W = innerWidth; H = innerHeight;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.round(W * dpr);
+    cv.height = Math.round(H * dpr);
+    const hudH = 92, availH = H - hudH;
+    scale = Math.min(W * 0.96, availH * 0.96) / (2 * R + 10);
+    cx = W / 2;
+    cy = hudH + availH / 2;
+  }
+
+  // ---------- Grid untuk tabrakan antar bola ----------
+  let CELL, GN, head, next;
+  function configure() {
+    FULL = Math.floor(COVER * (R / r) ** 2);
+    CELL = r * 2; GN = Math.ceil((R * 2) / CELL) + 2;
+    head = new Int32Array(GN * GN);
+    next = new Int32Array(FULL * 2 + 64);
+    elFull.textContent = FULL;
+  }
+
+  function collide() {
+    const n = balls.length;
+    if (next.length < n) next = new Int32Array(n * 2);
+    head.fill(-1);
+    for (let i = 0; i < n; i++) {
+      const b = balls[i];
+      let gx = Math.floor((b.x + R) / CELL) + 1, gy = Math.floor((b.y + R) / CELL) + 1;
+      gx = gx < 0 ? 0 : gx >= GN ? GN - 1 : gx;
+      gy = gy < 0 ? 0 : gy >= GN ? GN - 1 : gy;
+      const c = gy * GN + gx;
+      next[i] = head[c]; head[c] = i;
+    }
+    const D2 = (2 * r) * (2 * r);
+    for (let i = 0; i < n; i++) {
+      const a = balls[i];
+      let gx = Math.floor((a.x + R) / CELL) + 1, gy = Math.floor((a.y + R) / CELL) + 1;
+      gx = gx < 0 ? 0 : gx >= GN ? GN - 1 : gx;
+      gy = gy < 0 ? 0 : gy >= GN ? GN - 1 : gy;
+      for (let oy = -1; oy <= 1; oy++) {
+        const yy = gy + oy; if (yy < 0 || yy >= GN) continue;
+        for (let ox = -1; ox <= 1; ox++) {
+          const xx = gx + ox; if (xx < 0 || xx >= GN) continue;
+          for (let j = head[yy * GN + xx]; j !== -1; j = next[j]) {
+            if (j <= i) continue;
+            const b = balls[j];
+            let dx = a.x - b.x, dy = a.y - b.y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 >= D2) continue;
+            let d = Math.sqrt(d2);
+            if (d < 0.0001) { dx = 1; dy = 0; d = 1; }
+            const nx = dx / d, ny = dy / d, ov = (2 * r - d) * 0.5;
+            a.x += nx * ov; a.y += ny * ov;
+            b.x -= nx * ov; b.y -= ny * ov;
+            const vn = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+            if (vn < 0) {
+              a.vx -= vn * nx; a.vy -= vn * ny;
+              b.vx += vn * nx; b.vy += vn * ny;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ---------- Potong ----------
+  function spark(x, y, px, py, c) {
+    for (let i = 0; i < 5; i++) {
+      const s = rnd(-1, 1) > 0 ? 1 : -1, sp = rnd(60, 220);
+      parts.push({
+        x, y, vx: px * s * sp + rnd(-40, 40), vy: py * s * sp + rnd(-40, 40),
+        life: 0, max: rnd(0.2, 0.4), size: rnd(1, 2.2), c
+      });
+    }
+  }
+
+  function cutBalls() {
+    const c = Math.cos(theta), s = Math.sin(theta);
+    const px = -s, py = c;                         // arah tegak lurus bilah
+    const add = [];
+    for (let i = balls.length - 1; i >= 0; i--) {
+      const b = balls[i];
+      if (b.cd > t) continue;
+      const along = b.x * c + b.y * s;
+      const perp = b.x * px + b.y * py;
+      if (along > GUARD - r * 0.5 && along < BLADE + r && Math.abs(perp) < r + HALF) {
+        const base = Math.atan2(b.vy, b.vx), g = b.g + 1;
+        spark(b.x, b.y, px, py, colorOf(g));
+        sfxCut(g);
+        for (let k = 0; k < SPLIT; k++) {
+          let ang;
+          if (SPLIT === 2) {
+            const side = k === 0 ? 1 : -1;      // the two halves fly to either side of the blade
+            ang = Math.atan2(Math.sin(base) * 0.5 + py * side * 0.9, Math.cos(base) * 0.5 + px * side * 0.9);
+          } else {
+            ang = base + (k / SPLIT) * TAU + rnd(-0.3, 0.3);
+          }
+          const nb = newBall(b.x + Math.cos(ang) * r * 0.6, b.y + Math.sin(ang) * r * 0.6, ang, g);
+          nb.cd = t + CUT_CD;
+          add.push(nb);
+        }
+        balls[i] = balls[balls.length - 1];
+        balls.pop();
+      }
+    }
+    for (const nb of add) balls.push(nb);
+  }
+
+  // ---------- Meledak ----------
+  function explode() {
+    state = 'boom'; bt = 0; shake = 16; flash = 0.45; shock = 0;
+    sfxBoom();
+    for (const b of balls) {
+      const a = Math.atan2(b.y, b.x) + rnd(-0.5, 0.5), sp = rnd(260, 980);
+      b.vx = Math.cos(a) * sp + b.vx * 0.3;
+      b.vy = Math.sin(a) * sp + b.vy * 0.3;
+    }
+    for (let i = 0; i < 160; i++) {
+      const b = balls[(Math.random() * balls.length) | 0];
+      const a = rnd(0, TAU), sp = rnd(200, 1100);
+      parts.push({ x: b.x, y: b.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+                   life: 0, max: rnd(0.5, 1.3), size: rnd(1.2, 3.4), c: colorOf(b.g) });
+    }
+  }
+
+  // ---------- Update ----------
+  function step(dt) {
+    if (state === 'play') {
+      theta += OMEGA * dt;             // y ke bawah di canvas => sudut naik = searah jarum jam
+      t += dt;
+      swordA = Math.min(1, swordA + dt * 4);
+      for (const b of balls) {
+        b.x += b.vx * dt; b.y += b.vy * dt;
+        const d2 = b.x * b.x + b.y * b.y, lim = R - r;
+        if (d2 > lim * lim) {
+          const d = Math.sqrt(d2), nx = b.x / d, ny = b.y / d;
+          b.x = nx * lim; b.y = ny * lim;
+          const vn = b.vx * nx + b.vy * ny;
+          if (vn > 0) { b.vx -= 2 * vn * nx; b.vy -= 2 * vn * ny; }
+        }
+      }
+      collide();
+      cutBalls();
+      if (balls.length >= FULL) explode();
+    } else {
+      bt += dt;
+      theta += OMEGA * dt;             // sword keeps spinning during the explosion
+      const drag = Math.max(0, 1 - 1.3 * dt);
+      for (const b of balls) { b.x += b.vx * dt; b.y += b.vy * dt; b.vx *= drag; b.vy *= drag; }
+      shock = Math.min(1, bt / 0.9);
+      if (bt > 1.9) reset();
+    }
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i];
+      p.life += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.97; p.vy *= 0.97;
+      if (p.life >= p.max) { parts[i] = parts[parts.length - 1]; parts.pop(); }
+    }
+    shake *= Math.pow(0.001, dt);
+    flash = Math.max(0, flash - dt * 1.4);
+  }
+
+  // ---------- Draw ----------
+  function drawSword() {
+    ctx.save();
+    ctx.globalAlpha = swordA;
+    ctx.rotate(theta);
+    // jejak gerak
+    ctx.lineCap = 'round';
+    for (let i = 1; i <= 14; i++) {
+      ctx.save();
+      ctx.rotate(-i * 0.028);
+      ctx.globalAlpha = swordA * 0.075 * (1 - i / 15);
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.moveTo(GUARD, 0); ctx.lineTo(BLADE - 6, 0); ctx.stroke();
+      ctx.restore();
+    }
+    // gagang
+    ctx.fillStyle = '#7a7a7a';
+    ctx.fillRect(-70, -3.5, 70 + GUARD - 2, 7);
+    ctx.fillStyle = '#4a4a4a';
+    for (let x = -64; x < GUARD - 8; x += 10) ctx.fillRect(x, -3.5, 3, 7);
+    // tsuba
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.ellipse(GUARD, 0, 3.2, 12, 0, 0, TAU); ctx.fill();
+    // bilah
+    ctx.beginPath();
+    ctx.moveTo(GUARD, -3);
+    ctx.lineTo(BLADE - 16, -2.6);
+    ctx.lineTo(BLADE + 6, 0);
+    ctx.lineTo(BLADE - 16, 2.6);
+    ctx.lineTo(GUARD, 3);
+    ctx.closePath();
+    ctx.fillStyle = '#f4f4f4'; ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(GUARD + 2, 0.4); ctx.lineTo(BLADE - 8, 0.2); ctx.stroke();
+    ctx.restore();
+  }
+
+  function draw() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+
+    const sx = rnd(-1, 1) * shake, sy = rnd(-1, 1) * shake;
+    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * (cx + sx), dpr * (cy + sy));
+
+    // gelombang kejut
+    if (state === 'boom') {
+      ctx.globalAlpha = (1 - shock) * 0.7;
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2 + (1 - shock) * 6;
+      ctx.beginPath(); ctx.arc(0, 0, R + shock * R * 1.1, 0, TAU); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // lingkaran outline
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5;
+    ctx.globalAlpha = state === 'boom' ? Math.max(0.25, 1 - bt * 0.8) : 1;
+    ctx.beginPath(); ctx.arc(0, 0, R + 1.5, 0, TAU); ctx.stroke();
+
+    // bola
+    const fade = state === 'boom' ? Math.max(0, 1 - bt / 1.7) : 1;
+    ctx.globalAlpha = fade;
+    const rr = (state === 'boom' ? r * (1 - 0.35 * Math.min(1, bt)) : r) - 0.6;
+    let lastCol = null, open = false;
+    for (const b of balls) {
+      const col = colorOf(b.g);
+      if (col !== lastCol) {                 // batch consecutive balls of the same color
+        if (open) ctx.fill();
+        ctx.fillStyle = col; ctx.beginPath(); lastCol = col; open = true;
+      }
+      ctx.moveTo(b.x + rr, b.y); ctx.arc(b.x, b.y, rr, 0, TAU);
+    }
+    if (open) ctx.fill();
+
+    // sparks
+    for (const p of parts) {
+      ctx.globalAlpha = 1 - p.life / p.max;
+      ctx.fillStyle = p.c;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, TAU); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    if (swordA > 0.01) drawSword();
+
+    if (flash > 0) {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.globalAlpha = flash; ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = 1;
+    }
+
+    if (balls.length !== shown) {
+      shown = balls.length;
+      elN.textContent = shown;
+    }
+  }
+
+  // ---------- Sound (synthesized, no files) ----------
+  let ac = null, master = null, noiseBuf = null, soundOn = true, lastSnd = 0;
+
+  function updateHint() {
+    const need = soundOn && !(ac && ac.state === 'running');
+    hint.style.opacity = need ? '0.42' : '0';
+  }
+  function unlock() {
+    if (!ac) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      ac = new AC();
+      master = ac.createGain(); master.gain.value = 0.5; master.connect(ac.destination);
+      noiseBuf = ac.createBuffer(1, ac.sampleRate * 1.4, ac.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      ac.onstatechange = updateHint;
+    }
+    if (ac.state !== 'running') ac.resume();
+    updateHint();
+  }
+  function noiseSrc(off) {
+    const s = ac.createBufferSource(); s.buffer = noiseBuf; s.start(ac.currentTime, off); return s;
+  }
+
+  // Slice: short filtered noise "swish" + a blip whose pitch rises with the ball's cut count
+  function sfxCut(g) {
+    if (!ac || !soundOn || ac.state !== 'running') return;
+    const now = ac.currentTime;
+    if (now - lastSnd < 0.03) return;
+    lastSnd = now;
+    const f = 520 * Math.pow(1.06, Math.min(g, 18));
+
+    const n = noiseSrc(Math.random() * 1.0), hp = ac.createBiquadFilter(), ng = ac.createGain();
+    hp.type = 'highpass'; hp.frequency.value = 2600;
+    ng.gain.setValueAtTime(0.35, now); ng.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+    n.connect(hp); hp.connect(ng); ng.connect(master); n.stop(now + 0.1);
+
+    const o = ac.createOscillator(), og = ac.createGain();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(f * 1.6, now); o.frequency.exponentialRampToValueAtTime(f * 0.7, now + 0.1);
+    og.gain.setValueAtTime(0.18, now); og.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+    o.connect(og); og.connect(master); o.start(now); o.stop(now + 0.13);
+  }
+
+  // Explosion: low thump + rumbling noise that sweeps down
+  function sfxBoom() {
+    if (!ac || !soundOn || ac.state !== 'running') return;
+    const now = ac.currentTime;
+    const n = noiseSrc(0), lp = ac.createBiquadFilter(), ng = ac.createGain();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(3200, now); lp.frequency.exponentialRampToValueAtTime(90, now + 1.1);
+    ng.gain.setValueAtTime(0.9, now); ng.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+    n.connect(lp); lp.connect(ng); ng.connect(master); n.stop(now + 1.25);
+
+    const o = ac.createOscillator(), og = ac.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(150, now); o.frequency.exponentialRampToValueAtTime(34, now + 0.55);
+    og.gain.setValueAtTime(0.9, now); og.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+    o.connect(og); og.connect(master); o.start(now); o.stop(now + 0.7);
+  }
+
+  // ---------- Settings panel ----------
+  const gear = document.getElementById('gear'), panel = document.getElementById('panel');
+  const sizeIn = document.getElementById('size'), splitIn = document.getElementById('split');
+  const vSize = document.getElementById('vSize'), vSplit = document.getElementById('vSplit');
+
+  gear.addEventListener('click', () => { panel.hidden = !panel.hidden; });
+  addEventListener('pointerdown', e => {
+    unlock();
+    if (!panel.hidden && !panel.contains(e.target) && !gear.contains(e.target)) panel.hidden = true;
+  });
+  addEventListener('keydown', unlock);
+
+  sizeIn.addEventListener('input', () => {
+    r = +sizeIn.value; vSize.textContent = r; configure(); reset();
+  });
+  splitIn.addEventListener('input', () => {
+    SPLIT = +splitIn.value; vSplit.textContent = SPLIT; reset();
+  });
+  panel.addEventListener('click', e => {
+    const bc = e.target.closest('[data-color]'), bs = e.target.closest('[data-sound]');
+    if (bc) {
+      colorMode = bc.dataset.color;
+      for (const x of bc.parentNode.children) x.classList.toggle('on', x === bc);
+    } else if (bs) {
+      soundOn = bs.dataset.sound === 'on';
+      for (const x of bs.parentNode.children) x.classList.toggle('on', x === bs);
+      updateHint();
+    } else if (e.target.id === 'restart') {
+      reset();
+    }
+  });
+
+  // ---------- Loop ----------
+  let last = 0, acc = 0;
+  function frame(ts) {
+    if (!last) last = ts;
+    const dt = Math.min((ts - last) / 1000, 0.05);
+    last = ts; acc += dt;
+    while (acc >= STEP) { step(STEP); acc -= STEP; }
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  addEventListener('resize', resize);
+  resize();
+  configure();
+  reset();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
