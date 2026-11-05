@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Orbit Bounce</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;color:#fff;
+    font-family:'Plus Jakarta Sans',system-ui,-apple-system,sans-serif;
+    -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block;cursor:crosshair}
+  #info{position:fixed;left:0;right:0;bottom:max(18px,env(safe-area-inset-bottom));text-align:center;
+    pointer-events:none;line-height:1.7}
+  #cfg{font-weight:700;font-size:13px;opacity:.7}
+  #sub{font-weight:500;font-size:11px;letter-spacing:.14em;text-transform:uppercase;opacity:.38;transition:opacity .4s}
+  #roll{position:fixed;right:max(14px,env(safe-area-inset-right));top:max(14px,env(safe-area-inset-top));
+    width:40px;height:40px;display:grid;place-items:center;border:0;border-radius:12px;
+    background:rgba(255,255,255,.08);color:#fff;cursor:pointer;padding:0}
+  #roll:hover{background:rgba(255,255,255,.14)}
+  #roll svg{width:20px;height:20px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<button id="roll" aria-label="New chaos">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="4" y="4" width="16" height="16" rx="4"/>
+    <circle cx="9" cy="9" r="1" fill="currentColor"/><circle cx="15" cy="15" r="1" fill="currentColor"/>
+    <circle cx="15" cy="9" r="1" fill="currentColor"/><circle cx="9" cy="15" r="1" fill="currentColor"/>
+  </svg>
+</button>
+<div id="info">
+  <div id="cfg"></div>
+  <div id="sub">Tap anywhere to enable sound &middot; click to drop a ball</div>
+</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  const elCfg = document.getElementById('cfg'), elSub = document.getElementById('sub');
+  const TAU = Math.PI * 2, R = 300;
+
+  // ---------- Seeded chaos: every session rolls a new world ----------
+  const mulberry = a => () => {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+  const SCALES = {
+    'Pentatonic': [0, 2, 4, 7, 9], 'Minor pentatonic': [0, 3, 5, 7, 10], 'Hirajoshi': [0, 2, 3, 7, 8],
+    'Dorian': [0, 2, 3, 5, 7, 9, 10], 'Lydian': [0, 2, 4, 6, 7, 9, 11], 'Whole tone': [0, 2, 4, 6, 8, 10]
+  };
+  const NOTE = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  const SHAPE = ['Circle', 'Circle', 'Triangle', 'Square', 'Pentagon', 'Hexagon', 'Heptagon', 'Octagon'];
+
+  let rand, seed, C, balls, rings, t, phi, glow, glowHue, bounces, W, H, dpr, scale, cx, cy;
+
+  function roll(s) {
+    seed = s; rand = mulberry(s);
+    const rr = (a, b) => a + rand() * (b - a), pick = a => a[(rand() * a.length) | 0];
+    const sc = pick(Object.keys(SCALES)), si = (rand() * SHAPE.length) | 0;
+    C = {
+      scaleName: sc, scale: SCALES[sc], root: (rand() * 12) | 0,
+      shape: SHAPE[si], sides: si < 2 ? 0 : si + 1,
+      spin: rand() < 0.3 ? 0 : rr(-0.6, 0.6),
+      gAng: rr(0, TAU), gMag: rr(250, 900), gSpin: rand() < 0.45 ? rr(-1.2, 1.2) : 0,
+      e: rr(0.985, 1.03), hue: rr(0, 360), hueStep: rr(-45, 45) || 20,
+      trail: rr(0.05, 0.2), r: rr(5, 10), start: 1 + ((rand() * 3) | 0),
+      every: 3 + ((rand() * 6) | 0), cap: 14 + ((rand() * 20) | 0)
+    };
+    C.a = C.sides ? R * 0.9 : R;                 // apothem of the container
+    t = 0; phi = rand() * TAU; glow = 0; glowHue = C.hue; bounces = 0; rings = []; balls = [];
+    for (let i = 0; i < C.start; i++) {
+      const a = rand() * TAU, d = rr(0, R * 0.5);
+      balls.push(mkBall(Math.cos(a) * d, Math.sin(a) * d, rr(120, 320), rand() * TAU));
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
+    elCfg.textContent = `${C.scaleName} · ${NOTE[C.root]} · ${C.shape} · #${seed.toString(36).toUpperCase()}`;
+    try { history.replaceState(null, '', '#' + seed.toString(36)); } catch (e) {}
+  }
+  const newSeed = () => (Math.random() * 1e9) | 0;
+  const mkBall = (x, y, sp, a) => ({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, h: C.hue });
+
+  function resize() {
+    W = innerWidth; H = innerHeight; dpr = Math.min(devicePixelRatio || 1, 2);
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    scale = Math.min(W, H - 90) * 0.96 / (2 * R + 12);
+    cx = W / 2; cy = (H - 60) / 2 + 12;
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
+  }
+
+  // ---------- Sound ----------
+  let ac = null, master, send, soundOn = true, voices = [];
+  function unlock() {
+    if (!ac) {
+      const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+      ac = new AC();
+      const comp = ac.createDynamicsCompressor(); comp.connect(ac.destination);
+      master = ac.createGain(); master.gain.value = 0.55; master.connect(comp);
+      // soft echo for a bit of space
+      send = ac.createGain(); send.gain.value = 0.45;
+      const dl = ac.createDelay(1), fb = ac.createGain(), lp = ac.createBiquadFilter();
+      dl.delayTime.value = 0.3; fb.gain.value = 0.4; lp.type = 'lowpass'; lp.frequency.value = 2400;
+      send.connect(dl); dl.connect(lp); lp.connect(fb); fb.connect(dl); lp.connect(comp);
+      ac.onstatechange = hintUpdate;
+    }
+    if (ac.state !== 'running') ac.resume();
+    hintUpdate();
+  }
+  function hintUpdate() { elSub.style.opacity = (ac && ac.state === 'running') ? '0' : '0.38'; }
+  function pluck(midi, vel) {
+    if (!ac || !soundOn || ac.state !== 'running') return;
+    const now = ac.currentTime;
+    voices = voices.filter(v => now - v < 0.06);
+    if (voices.length > 5) return;
+    voices.push(now);
+    const f = 440 * Math.pow(2, (midi - 69) / 12), g = ac.createGain(), v = 0.05 + 0.3 * vel;
+    g.gain.setValueAtTime(0.0001, now); g.gain.linearRampToValueAtTime(v, now + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.9);
+    g.connect(master); g.connect(send);
+    for (const [type, mul, amp] of [['sine', 1, 1], ['triangle', 2, 0.25]]) {
+      const o = ac.createOscillator(), og = ac.createGain();
+      o.type = type; o.frequency.value = f * mul; o.detune.value = (Math.random() - 0.5) * 8; og.gain.value = amp;
+      o.connect(og); og.connect(g); o.start(now); o.stop(now + 0.95);
+    }
+  }
+
+  // ---------- Physics ----------
+  function hit(nx, ny, x, y, impact) {
+    if (impact < 55) return;                       // ignore resting contact
+    const N = C.scale.length * 2;
+    const ang = Math.atan2(ny, nx), deg = Math.floor(((ang + Math.PI) / TAU) * N) % N;
+    const midi = 48 + C.root + C.scale[deg % C.scale.length] + 12 * Math.floor(deg / C.scale.length);
+    const hue = (C.hue + deg * C.hueStep + 360 * 4) % 360;
+    pluck(midi, Math.min(1, impact / 700));
+    rings.push({ x, y, r: C.r, max: 28 + Math.min(60, impact * 0.09), life: 0, hue });
+    glow = 1; glowHue = hue; bounces++;
+    return hue;
+  }
+
+  function stepBall(b, dt, bi) {
+    const ga = C.gAng + C.gSpin * t;
+    b.vx += Math.cos(ga) * C.gMag * dt; b.vy += Math.sin(ga) * C.gMag * dt;
+    b.x += b.vx * dt; b.y += b.vy * dt;
+    const r = C.r;
+    let sp = Math.hypot(b.vx, b.vy);
+    if (sp > 1100) { b.vx *= 1100 / sp; b.vy *= 1100 / sp; }
+
+    const wall = (nx, ny, pen, wvx, wvy) => {      // reflect against a (possibly moving) wall
+      b.x -= nx * pen; b.y -= ny * pen;
+      let rx = b.vx - wvx, ry = b.vy - wvy;
+      const vn = rx * nx + ry * ny;
+      if (vn > 0) {
+        rx -= (1 + C.e) * vn * nx; ry -= (1 + C.e) * vn * ny;
+        b.vx = rx + wvx; b.vy = ry + wvy;
+        const h = hit(nx, ny, b.x + nx * r, b.y + ny * r, vn);
+        if (h !== undefined) {
+          b.h = h;
+          if (bounces % C.every === 0 && balls.length < C.cap) {   // every Nth bounce splits off a new ball
+            balls.push(mkBall(b.x, b.y, 140 + Math.random() * 200, Math.random() * TAU));
+          }
+        }
+      }
+    };
+
+    if (!C.sides) {
+      const d = Math.hypot(b.x, b.y);
+      if (d + r > C.a) wall(b.x / d, b.y / d, d + r - C.a, 0, 0);
+    } else {
+      const n = C.sides, w = C.spin;
+      for (let i = 0; i < n; i++) {
+        const a = phi + i * TAU / n, nx = Math.cos(a), ny = Math.sin(a);
+        const pen = b.x * nx + b.y * ny + r - C.a;
+        if (pen > 0) wall(nx, ny, pen, -w * b.y, w * b.x);
+      }
+    }
+  }
+
+  // ---------- Draw ----------
+  function drawShape() {
+    ctx.beginPath();
+    if (!C.sides) ctx.arc(0, 0, C.a, 0, TAU);
+    else {
+      const n = C.sides, rv = C.a / Math.cos(Math.PI / n);
+      for (let i = 0; i < n; i++) {
+        const a = phi + (i + 0.5) * TAU / n;
+        i ? ctx.lineTo(Math.cos(a) * rv, Math.sin(a) * rv) : ctx.moveTo(Math.cos(a) * rv, Math.sin(a) * rv);
+      }
+      ctx.closePath();
+    }
+  }
+
+  function draw(dt) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1; ctx.fillStyle = `rgba(0,0,0,${C.trail})`; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * cx, dpr * cy);
+
+    // container
+    ctx.lineJoin = 'round'; ctx.lineWidth = 2.5;
+    ctx.strokeStyle = glow > 0.02 ? `hsl(${glowHue},90%,${60 + glow * 30}%)` : '#fff';
+    ctx.globalAlpha = 0.35 + glow * 0.65;
+    drawShape(); ctx.stroke();
+
+    // ripples
+    for (let i = rings.length - 1; i >= 0; i--) {
+      const g = rings[i]; g.life += dt * 1.6;
+      if (g.life >= 1) { rings[i] = rings[rings.length - 1]; rings.pop(); continue; }
+      const e = 1 - Math.pow(1 - g.life, 3);
+      ctx.globalAlpha = (1 - g.life) * 0.85; ctx.lineWidth = 2;
+      ctx.strokeStyle = `hsl(${g.hue},90%,65%)`;
+      ctx.beginPath(); ctx.arc(g.x, g.y, g.r + g.max * e, 0, TAU); ctx.stroke();
+    }
+
+    // balls
+    ctx.globalAlpha = 1;
+    for (const b of balls) {
+      ctx.shadowBlur = 14; ctx.shadowColor = `hsl(${b.h},95%,60%)`;
+      ctx.fillStyle = `hsl(${b.h},90%,72%)`;
+      ctx.beginPath(); ctx.arc(b.x, b.y, C.r, 0, TAU); ctx.fill();
+    }
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+    glow *= Math.pow(0.02, dt);
+  }
+
+  // ---------- Loop ----------
+  let last = 0, acc = 0;
+  const STEP = 1 / 240;
+  function frame(ts) {
+    if (!last) last = ts;
+    const dt = Math.min((ts - last) / 1000, 0.05); last = ts; acc += dt;
+    while (acc >= STEP) {
+      t += STEP; phi += C.spin * STEP;
+      for (let i = 0; i < balls.length; i++) stepBall(balls[i], STEP, i);
+      acc -= STEP;
+    }
+    draw(dt);
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- Input ----------
+  document.getElementById('roll').addEventListener('click', e => { e.stopPropagation(); unlock(); roll(newSeed()); });
+  cv.addEventListener('pointerdown', e => {
+    unlock();
+    const x = (e.clientX - cx) / scale, y = (e.clientY - cy) / scale;
+    if (Math.hypot(x, y) < C.a - C.r && balls.length < 60) balls.push(mkBall(x, y, 150 + Math.random() * 250, Math.random() * TAU));
+  });
+  addEventListener('keydown', e => { unlock(); if (e.key === ' ') roll(newSeed()); });
+  addEventListener('resize', resize);
+
+  resize();
+  const fromHash = parseInt((location.hash || '').slice(1), 36);
+  roll(Number.isFinite(fromHash) && fromHash > 0 ? fromHash : newSeed());
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

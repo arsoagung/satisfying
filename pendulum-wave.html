@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Pendulum Wave</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;color:#fff;
+    font-family:'Plus Jakarta Sans',system-ui,-apple-system,sans-serif;
+    -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+  #info{position:fixed;left:0;right:0;bottom:max(18px,env(safe-area-inset-bottom));text-align:center;
+    pointer-events:none;line-height:1.7}
+  #cfg{font-weight:700;font-size:13px;opacity:.7}
+  #sub{font-weight:500;font-size:11px;letter-spacing:.14em;text-transform:uppercase;opacity:.38;transition:opacity .4s}
+  #roll{position:fixed;right:max(14px,env(safe-area-inset-right));top:max(14px,env(safe-area-inset-top));
+    width:40px;height:40px;display:grid;place-items:center;border:0;border-radius:12px;
+    background:rgba(255,255,255,.08);color:#fff;cursor:pointer;padding:0}
+  #roll:hover{background:rgba(255,255,255,.14)}
+  #roll svg{width:20px;height:20px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<button id="roll" aria-label="New chaos">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="4" y="4" width="16" height="16" rx="4"/>
+    <circle cx="9" cy="9" r="1" fill="currentColor"/><circle cx="15" cy="15" r="1" fill="currentColor"/>
+    <circle cx="15" cy="9" r="1" fill="currentColor"/><circle cx="9" cy="15" r="1" fill="currentColor"/>
+  </svg>
+</button>
+<div id="info">
+  <div id="cfg"></div>
+  <div id="sub">Tap anywhere to enable sound &middot; click to scramble</div>
+</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  const elCfg = document.getElementById('cfg'), elSub = document.getElementById('sub');
+  const TAU = Math.PI * 2, R = 300;
+
+  // ---------- Seeded chaos: every session rolls a new world ----------
+  const mulberry = a => () => {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+  const SCALES = {
+    'Pentatonic': [0, 2, 4, 7, 9], 'Minor pentatonic': [0, 3, 5, 7, 10], 'Hirajoshi': [0, 2, 3, 7, 8],
+    'Dorian': [0, 2, 3, 5, 7, 9, 10], 'Lydian': [0, 2, 4, 6, 7, 9, 11], 'Whole tone': [0, 2, 4, 6, 8, 10]
+  };
+  const NOTE = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+  let rand, seed, C, P, t, W, H, dpr, scale, cx, cy;
+
+  function roll(s) {
+    seed = s; rand = mulberry(s);
+    const rr = (a, b) => a + rand() * (b - a), pick = a => a[(rand() * a.length) | 0];
+    const sc = pick(Object.keys(SCALES));
+    C = {
+      scaleName: sc, scale: SCALES[sc], root: (rand() * 12) | 0,
+      N: 14 + ((rand() * 17) | 0), mode: pick(['Rows', 'Spokes', 'Spokes']),
+      law: pick(['Linear', 'Linear', 'Curved', 'Drifting']),
+      cycle: rr(30, 70), n0: 16 + ((rand() * 20) | 0), speed: rr(0.8, 1.5),
+      spread: rand() < 0.35 ? rr(-0.35, 0.35) : 0,      // phase offset per pendulum (0 = classic aligned start)
+      hue: rr(0, 360), hueSpan: rr(120, 330) * (rand() < 0.5 ? -1 : 1), trail: rr(0.1, 0.22)
+    };
+    // frequency of every pendulum; "Drifting" never fully re-syncs
+    P = [];
+    for (let i = 0; i < C.N; i++) {
+      let k = i;
+      if (C.law === 'Curved') k = Math.pow(i, 1.18);
+      const jitter = C.law === 'Drifting' ? rr(-0.35, 0.35) : 0;
+      P.push({ f: (C.n0 + k + jitter) / C.cycle, ph: C.spread * i, u: 1 });
+    }
+    t = 0;
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
+    elCfg.textContent = `${C.mode} · ${C.law} · ${C.scaleName} ${NOTE[C.root]} · ${C.N} · #${seed.toString(36).toUpperCase()}`;
+    try { history.replaceState(null, '', '#' + seed.toString(36)); } catch (e) {}
+  }
+  const newSeed = () => (Math.random() * 1e9) | 0;
+
+  function resize() {
+    W = innerWidth; H = innerHeight; dpr = Math.min(devicePixelRatio || 1, 2);
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    scale = Math.min(W, H - 90) * 0.96 / (2 * R + 12);
+    cx = W / 2; cy = (H - 60) / 2 + 12;
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
+  }
+
+  // ---------- Sound ----------
+  let ac = null, master, send, voices = [];
+  function unlock() {
+    if (!ac) {
+      const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+      ac = new AC();
+      const comp = ac.createDynamicsCompressor(); comp.connect(ac.destination);
+      master = ac.createGain(); master.gain.value = 0.5; master.connect(comp);
+      send = ac.createGain(); send.gain.value = 0.5;
+      const dl = ac.createDelay(1), fb = ac.createGain(), lp = ac.createBiquadFilter();
+      dl.delayTime.value = 0.34; fb.gain.value = 0.42; lp.type = 'lowpass'; lp.frequency.value = 2200;
+      send.connect(dl); dl.connect(lp); lp.connect(fb); fb.connect(dl); lp.connect(comp);
+      ac.onstatechange = hintUpdate;
+    }
+    if (ac.state !== 'running') ac.resume();
+    hintUpdate();
+  }
+  function hintUpdate() { elSub.style.opacity = (ac && ac.state === 'running') ? '0' : '0.38'; }
+  function bell(midi) {
+    if (!ac || ac.state !== 'running') return;
+    const now = ac.currentTime;
+    voices = voices.filter(v => now - v < 0.08);
+    if (voices.length > 7) return;
+    voices.push(now);
+    const f = 440 * Math.pow(2, (midi - 69) / 12), g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, now); g.gain.linearRampToValueAtTime(0.17, now + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 1.3);
+    g.connect(master); g.connect(send);
+    for (const [mul, amp] of [[1, 1], [2.756, 0.15]]) {      // soft bell: fundamental + inharmonic partial
+      const o = ac.createOscillator(), og = ac.createGain();
+      o.type = 'sine'; o.frequency.value = f * mul; og.gain.value = amp;
+      o.connect(og); og.connect(g); o.start(now); o.stop(now + 1.35);
+    }
+  }
+  const noteFor = i => {
+    const L = C.scale.length, deg = Math.floor(i * L * 3 / C.N);
+    return 48 + C.root + C.scale[deg % L] + 12 * Math.floor(deg / L);
+  };
+
+  // ---------- Draw ----------
+  const pulses = [];
+  function pos(i, u) {
+    if (C.mode === 'Rows') {
+      const y = -R * 0.86 + i * (R * 1.72) / (C.N - 1);
+      return [u * R * 0.92, y];
+    }
+    const a = i * Math.PI / C.N, d = u * R * 0.92;
+    return [Math.cos(a) * d, Math.sin(a) * d];
+  }
+
+  function draw(dt) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1; ctx.fillStyle = `rgba(0,0,0,${C.trail})`; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * cx, dpr * cy);
+
+    // faint guides
+    ctx.globalAlpha = 0.06; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2; ctx.beginPath();
+    if (C.mode === 'Rows') { ctx.moveTo(0, -R); ctx.lineTo(0, R); }
+    else for (let i = 0; i < C.N; i++) {
+      const a = i * Math.PI / C.N; ctx.moveTo(-Math.cos(a) * R, -Math.sin(a) * R); ctx.lineTo(Math.cos(a) * R, Math.sin(a) * R);
+    }
+    ctx.stroke();
+
+    // crossing pulses
+    for (let i = pulses.length - 1; i >= 0; i--) {
+      const p = pulses[i]; p.life += dt * 2.2;
+      if (p.life >= 1) { pulses[i] = pulses[pulses.length - 1]; pulses.pop(); continue; }
+      ctx.globalAlpha = (1 - p.life) * 0.8; ctx.lineWidth = 2; ctx.strokeStyle = `hsl(${p.hue},90%,66%)`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 6 + 26 * (1 - Math.pow(1 - p.life, 3)), 0, TAU); ctx.stroke();
+    }
+
+    // bobs
+    const rad = C.mode === 'Rows' ? Math.min(11, R * 0.86 / C.N * 1.05) : 6.5;
+    ctx.globalAlpha = 1;
+    for (let i = 0; i < P.length; i++) {
+      const [x, y] = pos(i, P[i].u), hue = (C.hue + C.hueSpan * i / C.N + 720) % 360;
+      ctx.shadowBlur = 12; ctx.shadowColor = `hsl(${hue},95%,60%)`;
+      ctx.fillStyle = `hsl(${hue},90%,70%)`;
+      ctx.beginPath(); ctx.arc(x, y, rad, 0, TAU); ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+  }
+
+  // ---------- Loop ----------
+  let last = 0;
+  function frame(ts) {
+    if (!last) last = ts;
+    const dt = Math.min((ts - last) / 1000, 0.05); last = ts;
+    t += dt * C.speed;
+    for (let i = 0; i < P.length; i++) {
+      const p = P[i], u = Math.cos(TAU * p.f * t + p.ph);
+      if ((u > 0) !== (p.u > 0)) {                 // crossed the center line
+        bell(noteFor(i));
+        const [x, y] = pos(i, 0);
+        pulses.push({ x, y, life: 0, hue: (C.hue + C.hueSpan * i / C.N + 720) % 360 });
+      }
+      p.u = u;
+    }
+    draw(dt);
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- Input ----------
+  document.getElementById('roll').addEventListener('click', e => { e.stopPropagation(); unlock(); roll(newSeed()); });
+  cv.addEventListener('pointerdown', () => {       // scramble: nudge every pendulum's phase
+    unlock();
+    for (const p of P) p.ph += (Math.random() - 0.5) * 1.6;
+  });
+  addEventListener('keydown', e => { unlock(); if (e.key === ' ') roll(newSeed()); });
+  addEventListener('resize', resize);
+
+  resize();
+  const fromHash = parseInt((location.hash || '').slice(1), 36);
+  roll(Number.isFinite(fromHash) && fromHash > 0 ? fromHash : newSeed());
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
